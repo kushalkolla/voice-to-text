@@ -64,6 +64,7 @@ class App:
         self._seg_q: "queue.Queue" = queue.Queue()
         self._consumer: threading.Thread | None = None
         self._last_preview = ""
+        self._warned_silent = False  # silent-mic guard latched this session?
 
         self.tray = Tray(self) if cfg["ui"].get("tray_icon", True) else None
         self.overlay = (
@@ -191,6 +192,7 @@ class App:
             if self.state != IDLE:
                 return
             self._last_preview = ""
+            self._warned_silent = False
             self._seg_q = queue.Queue()
             self._consumer = threading.Thread(
                 target=self._consume, daemon=True, name="dictate")
@@ -202,7 +204,43 @@ class App:
                 return
             self._set_state(RECORDING)
         sounds.play_start(self.cfg)
+        self._start_silence_watchdog()
         log.info("Live dictation started.")
+
+    def _start_silence_watchdog(self) -> None:
+        """Watch the live mic; if it delivers only digital silence for the grace
+        period, surface a clear "No mic input" warning instead of typing nothing.
+
+        A working mic reads room noise well above ``silence_warn_peak`` within a
+        second, so this never false-alarms on someone who simply hasn't spoken
+        yet — it only fires for a muted, blocked, or wrong-device mic. If audio
+        later appears, the warning clears itself."""
+        grace = float(self.cfg["audio"].get("silence_warn_seconds", 4.0))
+        if grace <= 0:
+            return
+
+        def _watch() -> None:
+            if self._stop.wait(grace):  # initial grace; bail on shutdown
+                return
+            while self.state == RECORDING and self.stream_rec.recording:
+                heard = self.stream_rec.heard_audio()
+                if not heard and not self._warned_silent:
+                    self._warned_silent = True
+                    log.warning(
+                        "No microphone input detected (peak=%.6f). The mic may be "
+                        "muted, in use by another app, or the wrong device is "
+                        "selected (see --check-mic).", self.stream_rec.session_peak())
+                    sounds.play_error(self.cfg)
+                    if self.overlay is not None:
+                        self.overlay.set_state("warn", "🔇 No mic input — muted or in use?")
+                elif heard and self._warned_silent:
+                    self._warned_silent = False  # signal arrived; recover quietly
+                    if self.overlay is not None:
+                        self.overlay.set_state(RECORDING, self._last_preview or None)
+                if self._stop.wait(1.0):
+                    return
+
+        threading.Thread(target=_watch, daemon=True, name="silence-watch").start()
 
     def _on_segment(self, audio, sr) -> None:
         """PortAudio thread: hand the finished phrase off and return fast."""
@@ -286,6 +324,12 @@ class App:
     def _pipeline_batch(self, audio) -> None:
         with self._busy:
             try:
+                if self._is_silent(audio):
+                    log.warning("Recording was digital silence — mic muted, in use, "
+                                "or wrong device (see --check-mic).")
+                    sounds.play_error(self.cfg)
+                    self._flash_warn("🔇 No mic input — muted or in use?")
+                    return
                 text = self._transcribe_clean(audio)
                 if text:
                     self._inject(text)
@@ -381,6 +425,30 @@ class App:
         t = threading.Timer(1.5, lambda: self._set_state(IDLE))
         t.daemon = True
         t.start()
+
+    def _flash_warn(self, msg: str) -> None:
+        """Show an amber 'no mic input' pill for a moment, then return to idle."""
+        if self.overlay is not None:
+            self.overlay.set_state("warn", msg)
+        t = threading.Timer(2.8, lambda: self._set_state(IDLE))
+        t.daemon = True
+        t.start()
+
+    def _is_silent(self, audio) -> bool:
+        """True if a recorded clip is digital silence (muted/blocked mic) — judged
+        by the fraction of nonzero samples, not loudness, so a quiet-but-working
+        mic is never mistaken for a dead one. Requires ≥0.5 s to avoid misjudging
+        a brief tap."""
+        import numpy as np
+        from .audio import SILENT_NONZERO_FRAC
+
+        if audio is None or not len(audio):
+            return False
+        if Recorder.duration_seconds(audio) < 0.5:
+            return False
+        a = np.asarray(audio, dtype="float32")
+        frac = (float(np.count_nonzero(a)) / a.size) if a.size else 0.0
+        return frac < SILENT_NONZERO_FRAC
 
 
 def _preview(text: str, width: int = 22) -> str:

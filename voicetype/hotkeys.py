@@ -22,6 +22,7 @@ Administrator is focused unless VoiceType is also elevated. For ordinary apps
 from __future__ import annotations
 
 import logging
+import time
 from typing import Callable
 
 log = logging.getLogger(__name__)
@@ -81,6 +82,10 @@ class HotkeyManager:
         self._ptt_down = False
         self._started = False
         self._tap_kb = None
+        # Modifier-only combos (e.g. Left Ctrl + Left Alt) can fire several times
+        # for one physical press; collapse fires closer than this into one toggle.
+        self._toggle_debounce = max(0.0, float(hk.get("toggle_debounce_ms", 500)) / 1000.0)
+        self._last_toggle = 0.0
 
     # -- lifecycle -------------------------------------------------------
     def start(self) -> None:
@@ -134,6 +139,15 @@ class HotkeyManager:
 
     # -- callbacks -------------------------------------------------------
     def _toggle_cb(self) -> None:
+        # Debounce: a modifier-only combo can fire repeatedly for one press (and
+        # autorepeats while held), which would start dictation and instantly stop
+        # it. Ignore fires inside the debounce window, but keep pushing the window
+        # forward so a held combo still counts as a single toggle.
+        now = time.monotonic()
+        if now - self._last_toggle < self._toggle_debounce:
+            self._last_toggle = now
+            return
+        self._last_toggle = now
         # Fire while the Windows key is still held so the neutral tap counts as
         # part of the combo and the Start menu stays shut.
         if self.tame_win:

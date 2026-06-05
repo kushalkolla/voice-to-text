@@ -27,12 +27,14 @@ _VISUALS = {
     "recording": ("#e0322f", "Listening…"),
     "transcribing": ("#3482e2", "Finishing…"),
     "error": ("#c81e1e", "Error"),
+    "warn": ("#ffa01e", "No mic input"),
     "paused": ("#888888", "Paused"),
 }
 # States that should actually display the pill (idle stays hidden, unobtrusive).
-_VISIBLE = {"loading", "recording", "transcribing", "error"}
-# States where the ✕ stop button makes sense (an active dictation session).
-_STOPPABLE = {"recording", "transcribing"}
+_VISIBLE = {"loading", "recording", "transcribing", "error", "warn"}
+# States where the ✕ stop button makes sense (an active dictation session, plus
+# "warn" — that fires mid-dictation, so you still want a way to stop).
+_STOPPABLE = {"recording", "transcribing", "warn"}
 
 
 class Overlay:

@@ -46,8 +46,21 @@ DEFAULTS: dict[str, Any] = {
     },
     "audio": {
         "input_device": None,      # null = system default; or device index / name substring
+        # Prefer the WASAPI version of the default mic (Windows' modern shared-mode
+        # capture path) over PortAudio's legacy MME default. WASAPI shared mode is
+        # how two apps cleanly share one microphone — so this lets VoiceType run
+        # alongside another always-on dictation app (e.g. Wispr Flow) and is also
+        # lower-latency. Only applies when input_device is null; set false to force
+        # the old MME default, or set input_device explicitly to override entirely.
+        "prefer_wasapi": True,
         "max_seconds": 120,        # safety cap on a single utterance (push-to-talk mode)
         "min_seconds": 0.25,       # ignore accidental ultra-short taps
+        # Silent-mic guard: if the mic delivers digital silence (a stream of exact
+        # zeros — muted, held by another app, or wrong device) for this many seconds
+        # while you're dictating, the pill warns "No mic input" instead of silently
+        # typing nothing. A live mic emits nonzero dither even in a quiet room, so
+        # this only fires for a real problem. Set to 0 to disable.
+        "silence_warn_seconds": 4.0,
     },
     "streaming": {
         # Live dictation: press the shortcut once and it types as you speak, one
@@ -75,6 +88,9 @@ DEFAULTS: dict[str, Any] = {
         # Tap a neutral key while Win is held so a suppressed Win+H can't leave a
         # lone Win press that pops the Start menu. Only used for Win-based keys.
         "tame_win_key": True,
+        # Ignore repeat toggle fires within this many ms of the last one. Stops a
+        # modifier combo (Ctrl+Alt) from starting and instantly stopping dictation.
+        "toggle_debounce_ms": 500,
         # Optional: hold a single key to talk, release to insert. Empty = off.
         "push_to_talk": "",
         "cancel": "esc",            # stop dictating (keeps what was already typed)

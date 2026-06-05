@@ -146,20 +146,28 @@ After editing `config.json`, restart VoiceType (tray → Quit, then start again)
 Run these from this folder (the installer made a `.venv` here):
 
 ```powershell
+.\.venv\Scripts\python -m voicetype --doctor         # check everything; says READY or what's wrong
+.\.venv\Scripts\python -m voicetype --check-mic      # record 3 s and verify the mic delivers audio
 .\.venv\Scripts\python -m voicetype --selftest       # test the text/grammar pipeline (no mic)
 .\.venv\Scripts\python -m voicetype --list-devices   # list microphones
 .\.venv\Scripts\python -m voicetype --download       # (re)download the speech model
 ```
+
+**`--doctor` is the first thing to run if anything seems off** — it checks your
+Python deps, the microphone, the speech model (and GPU), grammar/Java, and your
+hotkey, then prints a single READY / not-ready verdict.
 
 ---
 
 ## Troubleshooting
 
 - **Nothing gets typed** → make sure you clicked into a text box *first*. If a specific app ignores the paste, set `injection.method` to `"type"` in `config.json`.
+- **It types nothing and the pill shows "🔇 No mic input"** → the mic is delivering silence: it's muted, another app is holding it, or the wrong device is selected. Run `--check-mic` to confirm, then unmute / pick another device. (VoiceType now detects this instead of failing silently.)
+- **Running it alongside another dictation app** (e.g. Wispr Flow) → that's fine. VoiceType captures through Windows' WASAPI *shared mode* (`audio.prefer_wasapi`, on by default), so two apps can share one microphone. Set `prefer_wasapi` to `false` only if you need the old behaviour.
 - **Dictation toggles by accident** → the default `Left Ctrl + Left Alt` shares its keys with `Ctrl+Alt+…` shortcuts, so pressing one of those can start/stop it. Switch `hotkeys.toggle` to a conflict-free key like `"caps lock"`, `"f9"`, or `"right ctrl+right shift"`. Also note any global hotkey can't reach a window running **as Administrator** unless VoiceType is also run as admin (right-click `Start Voice Typing.bat` → *Run as administrator*).
 - **If you chose `"windows+h"`** and it flashes the Windows panel or pops the Start menu → that's Windows fighting back under load; `model.cpu_threads` and `hotkeys.tame_win_key` reduce it, but a non-Windows key (the default `Left Ctrl + Left Alt`, or `Caps Lock`) sidesteps Windows entirely.
 - **Grammar isn't correcting** → it needs Java. Install it with `winget install Microsoft.OpenJDK.17` and restart. The app works fine without it (just no grammar pass).
-- **Wrong microphone** → run `--list-devices` and set `audio.input_device` to the index or part of the device name.
+- **Wrong microphone** → run `--check-mic` to see what the current device hears, then `--list-devices` and set `audio.input_device` to the index or part of the device name.
 - **First dictation is slow** → the model loads on first use. It's warm after that. Pre-download with `--download` to avoid it.
 - **It's a bit slow on an old PC** → set `model.name` to `base.en` or `tiny.en` in `config.json`.
 - **Check the logs** → tray → **Open logs folder** (or see `logs/voicetype.log`).

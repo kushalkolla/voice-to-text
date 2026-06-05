@@ -23,6 +23,12 @@ class Injector:
         self._kb = None
         self._lock = threading.Lock()
         self.last_len = 0  # chars of the most recent insertion (for "scratch that")
+        # Clipboard-restore bookkeeping for live dictation: phrases paste
+        # back-to-back, so we save the user's clipboard once at the start of a
+        # burst and restore it only after the *last* paste settles — otherwise
+        # each phrase would save the previous phrase's text and "restore" that.
+        self._pending_restores = 0
+        self._saved_clip = None
 
     def _keyboard(self):
         if self._kb is None:
@@ -76,18 +82,22 @@ class Injector:
         import pyperclip
         from pynput.keyboard import Controller, Key
 
-        previous = None
         restore = self.cfg.get("restore_clipboard", True)
-        if restore:
+        # Capture the user's real clipboard only at the start of a burst, before
+        # we overwrite it — so a rapid streaming sequence doesn't save our own
+        # pasted phrases and later "restore" one of them.
+        if restore and self._pending_restores == 0:
             try:
-                previous = pyperclip.paste()
+                self._saved_clip = pyperclip.paste()
             except Exception:  # noqa: BLE001
-                previous = None
+                self._saved_clip = None
 
         try:
             pyperclip.copy(text)
         except Exception as exc:  # noqa: BLE001 - fall back to typing
             log.warning("Clipboard copy failed (%s); typing instead.", exc)
+            if restore and self._pending_restores == 0:
+                self._saved_clip = None
             self._type(text)
             return
 
@@ -98,13 +108,21 @@ class Injector:
             kb.release("v")
 
         if restore:
-            # Restore after the target app has had a moment to read the clipboard.
+            self._pending_restores += 1
+
+            # Restore once the target app has read the clipboard — but only after
+            # the LAST queued paste, back to the clipboard we had before the burst.
             def _restore() -> None:
                 time.sleep(0.4)
-                try:
-                    pyperclip.copy(previous if previous is not None else "")
-                except Exception:  # noqa: BLE001
-                    pass
+                with self._lock:
+                    self._pending_restores -= 1
+                    if self._pending_restores <= 0:
+                        self._pending_restores = 0
+                        try:
+                            pyperclip.copy(self._saved_clip if self._saved_clip is not None else "")
+                        except Exception:  # noqa: BLE001
+                            pass
+                        self._saved_clip = None
 
             threading.Thread(target=_restore, daemon=True).start()
 

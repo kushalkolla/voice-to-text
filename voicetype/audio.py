@@ -13,6 +13,15 @@ from typing import Any
 
 TARGET_SR = 16_000
 
+# How we tell a working mic from a dead one — by the *fraction of nonzero
+# samples*, not loudness. A live mic emits nonzero electrical dither even in a
+# silent room (measured ~80%+ nonzero here); a muted mic, an app holding it
+# exclusively, or the wrong/disconnected device delivers a stream of exact zeros
+# (0% nonzero). This is far more reliable than a magnitude threshold, which a
+# quiet room can dip below while the mic is perfectly fine. Below this fraction =
+# treated as digital silence.
+SILENT_NONZERO_FRAC = 0.02
+
 log = logging.getLogger(__name__)
 
 
@@ -34,9 +43,39 @@ def list_input_devices() -> list[dict[str, Any]]:
     return out
 
 
-def _resolve_device(setting: Any):
-    """Map a config value (None / int / name substring) to a device index."""
+def _wasapi_default_input():
+    """Index of the WASAPI host API's default input device, or None.
+
+    WASAPI is Windows' modern, shared-mode capture path. PortAudio's plain
+    default points at the legacy MME emulation, which we measured as flaky when
+    another app is also using the mic; the WASAPI device shares cleanly.
+    """
+    import sounddevice as sd
+
+    try:
+        for ha in sd.query_hostapis():
+            if ha.get("name") == "Windows WASAPI":
+                di = ha.get("default_input_device", -1)
+                if di is not None and di >= 0:
+                    return int(di)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("WASAPI default lookup failed: %s", exc)
+    return None
+
+
+def _resolve_device(setting: Any, prefer_wasapi: bool = True):
+    """Map a config value (None / int / name substring) to a device index.
+
+    When no device is configured, prefer the WASAPI default input over the MME
+    default so VoiceType captures through the shared-mode path (lets it coexist
+    with another mic app, and is lower-latency). ``None`` still means "let
+    PortAudio pick" if WASAPI can't be resolved."""
     if setting is None or setting == "":
+        if prefer_wasapi:
+            w = _wasapi_default_input()
+            if w is not None:
+                log.debug("Using WASAPI default input device (index %d).", w)
+                return w
         return None
     if isinstance(setting, int):
         return setting
@@ -47,6 +86,51 @@ def _resolve_device(setting: Any):
             return dev["index"]
     log.warning("Input device %r not found; using system default.", setting)
     return None
+
+
+def probe_input(cfg: dict, seconds: float = 3.0) -> dict[str, Any]:
+    """Record a short sample from the configured device and measure its level.
+
+    Returns a dict describing what was captured so a caller can tell a working
+    mic from a muted / blocked / wrong-device one. ``verdict`` is one of
+    ``"ok"``, ``"quiet"``, ``"silent"`` (or ``"error"`` with ``error`` set).
+    """
+    import numpy as np
+    import sounddevice as sd
+
+    acfg = cfg.get("audio", {})
+    device = _resolve_device(acfg.get("input_device"), acfg.get("prefer_wasapi", True))
+    result: dict[str, Any] = {"requested": acfg.get("input_device"),
+                              "device_index": device}
+    try:
+        info = (sd.query_devices(device, "input") if device is not None
+                else sd.query_devices(kind="input"))
+        result["name"] = info.get("name", "?")
+        sr = int(info.get("default_samplerate") or TARGET_SR)
+        result["samplerate"] = sr
+        frames = max(1, int(seconds * sr))
+        rec = sd.rec(frames, samplerate=sr, channels=1, dtype="float32", device=device)
+        sd.wait()
+    except Exception as exc:  # noqa: BLE001
+        result["verdict"] = "error"
+        result["error"] = str(exc)
+        return result
+
+    a = np.asarray(rec, dtype="float32").reshape(-1)
+    peak = float(np.max(np.abs(a))) if a.size else 0.0
+    rms = float(np.sqrt(np.mean(a * a))) if a.size else 0.0
+    nonzero_frac = (float(np.count_nonzero(a)) / a.size) if a.size else 0.0
+    result["samples"] = int(a.size)
+    result["peak"] = peak
+    result["rms"] = rms
+    result["nonzero_frac"] = nonzero_frac
+    if nonzero_frac < SILENT_NONZERO_FRAC:
+        result["verdict"] = "silent"   # exact zeros: muted / in use / wrong device
+    elif rms < 1e-3:
+        result["verdict"] = "quiet"    # alive but faint
+    else:
+        result["verdict"] = "ok"
+    return result
 
 
 class Recorder:
@@ -68,7 +152,9 @@ class Recorder:
             if self.recording:
                 return True
             self._frames = []
-            device = _resolve_device(self.cfg["audio"].get("input_device"))
+            acfg = self.cfg["audio"]
+            device = _resolve_device(acfg.get("input_device"),
+                                     acfg.get("prefer_wasapi", True))
             try:
                 info = sd.query_devices(device, "input") if device is not None \
                     else sd.query_devices(kind="input")
@@ -166,6 +252,14 @@ class StreamingRecorder:
         self._block_ms = 30.0
         self.recording = False
         self._on_segment = None
+        # Telemetry that drives the silent-mic guard, updated in the PortAudio
+        # callback and read from other threads (scalar reads are atomic enough).
+        # _session_nonzero/_session_samples give the nonzero fraction (alive vs
+        # blocked); _session_peak/_cur_rms are for display and the level meter.
+        self._session_peak = 0.0
+        self._cur_rms = 0.0
+        self._session_nonzero = 0
+        self._session_samples = 0
 
     # -- lifecycle -------------------------------------------------------
     def start(self, on_segment) -> bool:
@@ -177,7 +271,9 @@ class StreamingRecorder:
                 return True
             self._on_segment = on_segment
             self._configure()
-            device = _resolve_device(self.cfg["audio"].get("input_device"))
+            acfg = self.cfg["audio"]
+            device = _resolve_device(acfg.get("input_device"),
+                                     acfg.get("prefer_wasapi", True))
             try:
                 info = sd.query_devices(device, "input") if device is not None \
                     else sd.query_devices(kind="input")
@@ -249,6 +345,10 @@ class StreamingRecorder:
         self._speech_run_ms = 0.0
         self._silence_run_ms = 0.0
         self._noise = None
+        self._session_peak = 0.0
+        self._cur_rms = 0.0
+        self._session_nonzero = 0
+        self._session_samples = 0
         pad_blocks = max(1, int(round(self._start_pad_ms / max(self._block_ms, 1e-6))))
         self._pre = collections.deque(maxlen=pad_blocks)
 
@@ -267,6 +367,14 @@ class StreamingRecorder:
         import numpy as np
 
         rms = float(np.sqrt(np.mean(block * block))) if block.size else 0.0
+        # Cheap level telemetry for the silent-mic guard and (future) level meter.
+        if block.size:
+            peak = float(np.max(np.abs(block)))
+            if peak > self._session_peak:
+                self._session_peak = peak
+            self._session_nonzero += int(np.count_nonzero(block))
+            self._session_samples += block.size
+        self._cur_rms = rms
         # Track a slow noise floor so the speech threshold rides above the room.
         if self._noise is None:
             self._noise = rms
@@ -316,6 +424,23 @@ class StreamingRecorder:
         cb = self._on_segment
         if cb is not None:
             cb(audio, self._device_sr)
+
+    # -- level telemetry -------------------------------------------------
+    def session_peak(self) -> float:
+        """Loudest sample (0..1) heard since the current session started."""
+        return self._session_peak
+
+    def current_rms(self) -> float:
+        """RMS (0..1) of the most recent audio block — a live level reading."""
+        return self._cur_rms
+
+    def heard_audio(self) -> bool:
+        """True once a live signal has arrived; False means digital silence
+        (mic muted, held by another app, or the wrong input device). Judged by
+        the fraction of nonzero samples — robust to a merely quiet room."""
+        if self._session_samples <= 0:
+            return False
+        return (self._session_nonzero / self._session_samples) >= SILENT_NONZERO_FRAC
 
     @staticmethod
     def to_target_sr(audio, src_sr: int):
