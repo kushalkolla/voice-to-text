@@ -1,0 +1,80 @@
+{
+  "model": {
+    "name": "small.en",
+    "device": "auto",
+    "compute_type": "auto",
+    "beam_size": 5,
+    "vad_filter": true,
+    "language": "en",
+    "initial_prompt": "",
+    "temperature": 0.0,
+    "cpu_threads": 0,
+    "task": "transcribe"
+  },
+  "audio": {
+    "input_device": null,
+    "max_seconds": 120,
+    "min_seconds": 0.25
+  },
+  "streaming": {
+    "enabled": true,
+    "silence_ms": 650,
+    "min_phrase_ms": 300,
+    "max_phrase_ms": 14000,
+    "onset_ms": 150,
+    "start_pad_ms": 200,
+    "energy_floor": 0.003,
+    "energy_mult": 3.0
+  },
+  "hotkeys": {
+    "toggle": "left ctrl+left alt",
+    "suppress_toggle": true,
+    "tame_win_key": true,
+    "push_to_talk": "",
+    "cancel": "esc"
+  },
+  "grammar": {
+    "enabled": true,
+    "language": "en-US",
+    "picky": false,
+    "disabled_categories": ["TYPOGRAPHY"],
+    "disabled_rules": []
+  },
+  "postprocess": {
+    "remove_fillers": true,
+    "fillers": ["um", "uh", "uhh", "uhm", "erm", "hmm", "mhm"],
+    "smart_capitalize": true,
+    "capitalize_i": true,
+    "fix_spacing": true,
+    "voice_commands": true,
+    "commands": {
+      "new line": "\n",
+      "new paragraph": "\n\n",
+      "press enter": "\n",
+      "tab key": "\t"
+    },
+    "replacements": {
+      "github": "GitHub",
+      "javascript": "JavaScript",
+      "voicetype": "VoiceType"
+    }
+  },
+  "injection": {
+    "method": "paste",
+    "append_space": true,
+    "restore_clipboard": true,
+    "paste_delay_ms": 80,
+    "key_delay_ms": 2
+  },
+  "ui": {
+    "tray_icon": true,
+    "show_overlay": true,
+    "sounds": true,
+    "start_sound_freq": 880,
+    "stop_sound_freq": 620
+  },
+  "general": {
+    "log_level": "INFO",
+    "warmup_on_start": true
+  }
+}

@@ -1,0 +1,6 @@
+# Optional GPU acceleration for NVIDIA cards (CUDA 12 / cuDNN 9).
+# install.ps1 installs these automatically when it detects an NVIDIA GPU.
+# About ~1.2 GB total. NOT needed on CPU-only PCs — the app runs great on CPU too;
+# the GPU just makes dictation ~10-20x faster.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*

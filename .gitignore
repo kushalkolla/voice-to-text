@@ -1,3 +1,24 @@
+# Python virtual environment (created by install.ps1)
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Runtime files
+logs/
+# Per-machine settings; auto-created on first run. Copy config.example.json to customize.
+config.json
+
+# Downloaded models / caches (kept out of the repo; re-downloaded on demand)
+models/
+*.bin
+
+# Build output from build-release.ps1 (regenerate any time; don't commit)
+dist/
+
 # Windows clutter
 Thumbs.db
 ehthumbs.db

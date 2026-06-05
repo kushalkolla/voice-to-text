@@ -1,0 +1,15 @@
+# VoiceType dependencies — all free & open-source, all run locally.
+# Install with:  pip install -r requirements.txt   (the installer does this for you)
+
+faster-whisper>=1.0.0     # local speech-to-text (CTranslate2; great punctuation)
+sounddevice>=0.4.6        # microphone capture (bundles PortAudio on Windows)
+soxr>=0.3.7               # fast, high-quality resampling to 16 kHz
+numpy>=1.24,<3            # audio buffers
+
+keyboard>=0.13.5         # global activation hotkey (and Win+H suppression if you choose it)
+pynput>=1.7.6            # keystroke injection (Ctrl+V paste / typing)
+pyperclip>=1.8.2          # clipboard paste injection
+pystray>=0.19.4           # system-tray icon
+Pillow>=10.0.0            # renders the tray icon
+
+language-tool-python>=2.7.1  # optional local grammar/spelling (uses your Java runtime)
