@@ -123,9 +123,9 @@ Settings live in **`config.json`** (created automatically on first run; see `con
 
 | Setting | What it does |
 | --- | --- |
-| `model.name` | Speech model. `auto` (default) picks `large-v3` on an NVIDIA GPU — the most accurate free model, and multilingual so it handles accents and non-English words (needs ~3 GB VRAM + a one-time ~3 GB download) — and the light `small.en` on CPU. Pin a lighter model (`medium.en`, `small.en`) for a small GPU or snappier latency. Use a non-`.en` model + `model.language` for other languages. |
+| `model.name` | Speech model. `auto` (default) picks `large-v3-turbo` on an NVIDIA GPU — near `large-v3` accuracy (multilingual, strong on accents/names) but several times faster (~2 GB VRAM, one-time download) — and the light `small.en` on CPU. Pin one to override: `large-v3` (max accuracy, slower), `medium.en`/`small.en` (lighter). Use a non-`.en` model + `model.language` for other languages. |
 | `streaming.enabled` | `true` (default) types live as you speak and you stop with **✕** / `Esc`. Set `false` for the classic flow: press once to record, press again to transcribe the whole thing at once. |
-| `streaming.silence_ms` | How long a pause ends a phrase and types it (default `650`). Lower = text appears sooner but may chop mid-sentence; higher = waits for clearer pauses. |
+| `streaming.silence_ms` | How long a pause ends a phrase and types it (default `500`). Lower = text appears sooner but may chop mid-sentence; higher = waits for clearer pauses. |
 | `streaming.energy_floor` / `streaming.energy_mult` | Speech-detection sensitivity. If quiet talking gets missed, lower these; if background noise triggers stray text, raise them. |
 | `hotkeys.toggle` | The start (and also stop) key. Default `"left ctrl+left alt"`. Rebind to anything — e.g. the conflict-free `"caps lock"`, `"right ctrl+right shift"`, a single `"f9"`, or `"windows+h"` to use the Windows key. |
 | `hotkeys.push_to_talk` | Optional hold-to-talk key (off by default). Set e.g. `"right ctrl"` to also hold a key to dictate. |

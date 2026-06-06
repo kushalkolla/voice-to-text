@@ -169,19 +169,21 @@ def _denoise(audio, sr: int = 16000):
 def _resolve_model_name(name: str, device: str, task: str) -> str:
     """Map the special model name ``"auto"`` to one sized to the hardware.
 
-    A CUDA GPU runs the best free model, ``large-v3`` — multilingual, so it
-    handles accented English and non-English words (names, places, e.g.
-    "Telugu") far better than the English-only ``.en`` checkpoints, which mangle
-    them. On CPU that would be far too slow, so we keep the light ``small.en``
-    (or multilingual ``small`` for translate). An explicit name always wins.
+    A CUDA GPU runs ``large-v3-turbo`` — a pruned-decoder large-v3 that keeps
+    nearly all of large-v3's accuracy (multilingual; strong on accented English
+    and non-English words/names like "Telugu") while decoding several times
+    faster, so live dictation stays snappy. On CPU that's still too slow, so we
+    keep the light ``small.en`` (or multilingual ``small`` for translate). An
+    explicit name always wins.
 
-    Note: ``large-v3`` needs ~3 GB of VRAM; a small GPU should pin a lighter
-    model (``medium.en``/``small.en``) in config.
+    Note: needs ~2 GB of VRAM; a very small GPU falls back automatically (see
+    _load_candidates) or can pin a lighter model. Pin ``large-v3`` for maximum
+    accuracy at the cost of speed.
     """
     if (name or "").strip().lower() != "auto":
         return name
     if device == "cuda":
-        return "large-v3"  # best free Whisper: most accurate, multilingual
+        return "large-v3-turbo"  # near large-v3 accuracy, several times faster
     return "small" if task == "translate" else "small.en"
 
 

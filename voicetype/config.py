@@ -23,11 +23,12 @@ LOG_DIR = PROJECT_ROOT / "logs"
 # overrides any of these; deleting a key restores the default below.
 DEFAULTS: dict[str, Any] = {
     "model": {
-        # Whisper model. "auto" (recommended) loads the most accurate free model
-        # your hardware can run: large-v3 on an NVIDIA GPU (multilingual, best for
-        # names/accents; ~3 GB VRAM + a one-time download), small.en on CPU (fast).
-        # Pin one to override: "tiny.en"/"base.en" (faster), "medium.en"/"large-v3"
-        # (more accurate), "distil-small.en" (light). Non-".en" = other languages.
+        # Whisper model. "auto" (recommended) loads the best model your hardware
+        # can run: large-v3-turbo on an NVIDIA GPU (multilingual, near large-v3
+        # accuracy but several times faster; ~2 GB VRAM + a one-time download),
+        # small.en on CPU. Pin one to override: "tiny.en"/"base.en" (faster),
+        # "large-v3" (max accuracy, slower), "distil-small.en" (light). A non-".en"
+        # model handles other languages.
         "name": "auto",
         "device": "auto",          # auto | cpu | cuda
         "compute_type": "auto",    # auto | int8 | int8_float16 | float16 | float32
@@ -73,7 +74,7 @@ DEFAULTS: dict[str, Any] = {
         # phrase at a time, until you click the ✕ button (or press Esc / the
         # shortcut again). Off = older "record, then transcribe on the 2nd press".
         "enabled": True,
-        "silence_ms": 650,         # a pause this long ends a phrase and types it
+        "silence_ms": 500,         # a pause this long ends a phrase and types it
         "min_phrase_ms": 300,      # ignore speech blips shorter than this
         "max_phrase_ms": 14000,    # force a phrase out so long monologues keep flowing
         "onset_ms": 150,           # speech must persist this long to start a phrase (debounce)

@@ -21,7 +21,7 @@
   },
   "streaming": {
     "enabled": true,
-    "silence_ms": 650,
+    "silence_ms": 500,
     "min_phrase_ms": 300,
     "max_phrase_ms": 14000,
     "onset_ms": 150,
