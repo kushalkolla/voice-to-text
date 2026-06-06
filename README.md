@@ -123,7 +123,7 @@ Settings live in **`config.json`** (created automatically on first run; see `con
 
 | Setting | What it does |
 | --- | --- |
-| `model.name` | Speech model. `small.en` (default) is the best balance; `base.en`/`tiny.en` are faster (snappier live typing); `medium.en`/`large-v3` are more accurate; `distil-small.en` is fast. Use a non-`.en` model + `model.language` for other languages. |
+| `model.name` | Speech model. `auto` (default) picks `large-v3` on an NVIDIA GPU — the most accurate free model, and multilingual so it handles accents and non-English words (needs ~3 GB VRAM + a one-time ~3 GB download) — and the light `small.en` on CPU. Pin a lighter model (`medium.en`, `small.en`) for a small GPU or snappier latency. Use a non-`.en` model + `model.language` for other languages. |
 | `streaming.enabled` | `true` (default) types live as you speak and you stop with **✕** / `Esc`. Set `false` for the classic flow: press once to record, press again to transcribe the whole thing at once. |
 | `streaming.silence_ms` | How long a pause ends a phrase and types it (default `650`). Lower = text appears sooner but may chop mid-sentence; higher = waits for clearer pauses. |
 | `streaming.energy_floor` / `streaming.energy_mult` | Speech-detection sensitivity. If quiet talking gets missed, lower these; if background noise triggers stray text, raise them. |
@@ -133,7 +133,7 @@ Settings live in **`config.json`** (created automatically on first run; see `con
 | `grammar.enabled` | Turn grammar correction on/off (also in the tray menu). |
 | `postprocess.fillers` | Words removed as fillers. |
 | `postprocess.commands` | Add your own spoken commands. |
-| `postprocess.replacements` | Custom dictionary, e.g. `{"github": "GitHub"}` to fix names/jargon. |
+| `postprocess.replacements` | Custom dictionary, e.g. `{"github": "GitHub"}` to fix names/jargon — these also bias recognition so the words come out right in the first place. |
 | `injection.method` | `"paste"` (default) or `"type"` if an app blocks paste. |
 | `ui.show_overlay` / `ui.sounds` | Toggle the floating pill / the start-stop beeps. |
 

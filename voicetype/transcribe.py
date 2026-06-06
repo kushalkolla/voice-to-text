@@ -134,6 +134,62 @@ def _normalize(audio, target: float = 0.9, max_gain: float = 40.0,
         return audio
 
 
+def _resolve_model_name(name: str, device: str, task: str) -> str:
+    """Map the special model name ``"auto"`` to one sized to the hardware.
+
+    A CUDA GPU runs the best free model, ``large-v3`` — multilingual, so it
+    handles accented English and non-English words (names, places, e.g.
+    "Telugu") far better than the English-only ``.en`` checkpoints, which mangle
+    them. On CPU that would be far too slow, so we keep the light ``small.en``
+    (or multilingual ``small`` for translate). An explicit name always wins.
+
+    Note: ``large-v3`` needs ~3 GB of VRAM; a small GPU should pin a lighter
+    model (``medium.en``/``small.en``) in config.
+    """
+    if (name or "").strip().lower() != "auto":
+        return name
+    if device == "cuda":
+        return "large-v3"  # best free Whisper: most accurate, multilingual
+    return "small" if task == "translate" else "small.en"
+
+
+def _build_hotwords(cfg: dict) -> str:
+    """Bias recognition toward the user's own vocabulary (names, brands, jargon).
+
+    Whisper infers unusual proper nouns from acoustics alone and often spells or
+    cases them wrong; passing them as hotwords nudges the decoder toward the
+    right tokens *at recognition time*, complementing ``postprocess.replacements``
+    (which only fixes text after the fact). Sourced from the corrected forms in
+    ``postprocess.replacements`` so it stays config-driven and free.
+    """
+    pp = cfg.get("postprocess", {}) or {}
+    repl = pp.get("replacements", {}) or {}
+    seen, uniq = set(), []
+    for v in repl.values():
+        if isinstance(v, str) and v.strip() and v.lower() not in seen:
+            seen.add(v.lower())
+            uniq.append(v.strip())
+    return " ".join(uniq)
+
+
+_hotwords_supported = None
+
+
+def _hotwords_ok() -> bool:
+    """Whether the installed faster-whisper accepts a ``hotwords`` argument."""
+    global _hotwords_supported
+    if _hotwords_supported is None:
+        try:
+            import inspect
+            from faster_whisper import WhisperModel
+
+            _hotwords_supported = "hotwords" in inspect.signature(
+                WhisperModel.transcribe).parameters
+        except Exception:  # noqa: BLE001
+            _hotwords_supported = False
+    return _hotwords_supported
+
+
 class Transcriber:
     """Wraps a faster-whisper model with lazy, thread-safe loading."""
 
@@ -143,9 +199,11 @@ class Transcriber:
         self._load_lock = threading.Lock()
         self.device = ""
         self.compute_type = ""
+        self.model_name = ""  # the concrete checkpoint actually loaded (resolves "auto")
         # "transcribe" (write what you said) or "translate" (any language -> English).
         self.task = str(cfg["model"].get("task", "transcribe") or "transcribe")
         self._warned_translate = False
+        self.hotwords = _build_hotwords(cfg)
 
     # -- loading ---------------------------------------------------------
     def ensure_loaded(self) -> None:
@@ -166,20 +224,23 @@ class Transcriber:
                 compute = _auto_compute_type(device)
 
             threads = _cpu_threads(mcfg)
+            name = _resolve_model_name(mcfg["name"], device, self.task)
             log.info(
                 "Loading Whisper model %r (device=%s, compute=%s, cpu_threads=%d) - first run downloads it...",
-                mcfg["name"], device, compute, threads,
+                name, device, compute, threads,
             )
             try:
-                self._model = WhisperModel(mcfg["name"], device=device,
+                self._model = WhisperModel(name, device=device,
                                            compute_type=compute, cpu_threads=threads)
             except Exception as exc:  # noqa: BLE001 - retry on CPU/int8 if GPU path fails
                 log.warning("Model load failed on %s/%s (%s); retrying on cpu/int8.",
                             device, compute, exc)
                 device, compute = "cpu", "int8"
-                self._model = WhisperModel(mcfg["name"], device=device,
+                name = _resolve_model_name(mcfg["name"], device, self.task)
+                self._model = WhisperModel(name, device=device,
                                            compute_type=compute, cpu_threads=threads)
             self.device, self.compute_type = device, compute
+            self.model_name = name
 
             # A GPU can load yet be unable to run (missing cuBLAS/cuDNN). Verify
             # with a tiny inference now so the first real dictation never fails.
@@ -218,10 +279,12 @@ class Transcriber:
         from faster_whisper import WhisperModel
 
         mcfg = self.cfg["model"]
-        self._model = WhisperModel(mcfg["name"], device="cpu", compute_type="int8",
+        name = _resolve_model_name(mcfg["name"], "cpu", self.task)
+        self._model = WhisperModel(name, device="cpu", compute_type="int8",
                                    cpu_threads=_cpu_threads(mcfg))
         self.device, self.compute_type = "cpu", "int8"
-        log.info("Switched to CPU model (device=cpu, compute=int8).")
+        self.model_name = name
+        log.info("Switched to CPU model %r (device=cpu, compute=int8).", name)
 
     # -- inference -------------------------------------------------------
     def transcribe(self, audio) -> str:
@@ -262,22 +325,35 @@ class Transcriber:
         task = "translate" if self.task == "translate" else "transcribe"
         # For translate, let Whisper detect the spoken language (any -> English).
         language = None if task == "translate" else (mcfg.get("language") or None)
-        if task == "translate" and str(mcfg.get("name", "")).endswith(".en") \
+        if task == "translate" and str(self.model_name or "").endswith(".en") \
                 and not self._warned_translate:
             self._warned_translate = True
             log.warning("Translate mode needs a multilingual model, but %r is "
-                        "English-only. Set model.name to 'small' (or 'base'/'medium') "
-                        "in config.json to translate other languages.", mcfg.get("name"))
-        segments, _info = self._model.transcribe(
-            audio,
+                        "English-only. Set model.name to 'auto' (or 'small'/'medium') "
+                        "in config.json to translate other languages.", self.model_name)
+        # Start at the configured temperature and let Whisper fall back to higher
+        # ones only when a segment looks like a hallucination (a repetition trips
+        # the compression-ratio guard, gibberish trips the log-prob guard). This
+        # is Whisper's own anti-hallucination ladder; a lone 0.0 switched it off.
+        t0 = float(mcfg.get("temperature", 0.0) or 0.0)
+        temps = tuple(round(t0 + 0.2 * i, 1)
+                      for i in range(6) if t0 + 0.2 * i <= 1.0 + 1e-6) or (t0,)
+        kwargs = dict(
             task=task,
             language=language,
             beam_size=int(mcfg.get("beam_size", 5)),
             vad_filter=vad_filter,
-            temperature=float(mcfg.get("temperature", 0.0)),
+            temperature=temps,
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-1.0,
+            no_speech_threshold=0.6,
             initial_prompt=mcfg.get("initial_prompt") or None,
             condition_on_previous_text=False,  # avoids run-on hallucinations in dictation
         )
+        # Nudge the decoder toward the user's own names/jargon (free, local).
+        if self.hotwords and _hotwords_ok():
+            kwargs["hotwords"] = self.hotwords
+        segments, _info = self._model.transcribe(audio, **kwargs)
         text = " ".join(seg.text.strip() for seg in segments).strip()
         # Whisper occasionally double-spaces between segments.
         return " ".join(text.split())

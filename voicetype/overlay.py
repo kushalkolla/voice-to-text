@@ -161,16 +161,90 @@ class Overlay:
         except Exception:  # noqa: BLE001 - non-Windows or restricted; pill still works
             pass
 
+    @staticmethod
+    def _active_work_area():
+        """Return the work area of the monitor the user is actually on.
+
+        ``winfo_screenwidth``/``winfo_screenheight`` only ever describe the
+        *primary* monitor, so centring on them pinned the pill there — when the
+        primary was the external display and you were dictating on the laptop
+        (or vice-versa) the pill appeared on the wrong screen, and only flipping
+        the Windows primary "fixed" it. Instead we ask Windows for the monitor
+        that holds the foreground window (the text box you're dictating into),
+        falling back to the monitor under the mouse and then the primary one.
+        The rectangle excludes the taskbar.
+
+        Returns ``(left, top, right, bottom)`` or ``None`` (non-Windows or any
+        failure), in which case the caller falls back to the primary monitor.
+        The values are in the same space Tk uses for ``geometry`` — for a
+        DPI-unaware process Windows virtualises both consistently — so they line
+        up no matter which monitor is primary or how the two are scaled.
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            MONITOR_DEFAULTTONEAREST = 2
+
+            # Set arg/return types: HMONITOR/HWND are 64-bit handles on x64 and
+            # would be silently truncated if left as ctypes' default int.
+            user32.GetForegroundWindow.restype = wintypes.HWND
+            user32.MonitorFromWindow.restype = wintypes.HMONITOR
+            user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+            user32.MonitorFromPoint.restype = wintypes.HMONITOR
+            user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+            user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+
+            hmon = None
+            hwnd = user32.GetForegroundWindow()
+            if hwnd:
+                hmon = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+            if not hmon:
+                pt = wintypes.POINT()
+                if user32.GetCursorPos(ctypes.byref(pt)):
+                    hmon = user32.MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
+            if not hmon:
+                return None
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD),
+                            ("rcMonitor", wintypes.RECT),
+                            ("rcWork", wintypes.RECT),
+                            ("dwFlags", wintypes.DWORD)]
+
+            user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR,
+                                               ctypes.POINTER(MONITORINFO)]
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if not user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                return None
+            r = mi.rcWork
+            if r.right <= r.left or r.bottom <= r.top:
+                return None
+            return (int(r.left), int(r.top), int(r.right), int(r.bottom))
+        except Exception:  # noqa: BLE001 - non-Windows / restricted; caller falls back
+            return None
+
     def _position(self) -> None:
         root = self._root
         root.update_idletasks()
         w = root.winfo_width() or 220
         h = root.winfo_height() or 40
-        sw = root.winfo_screenwidth()
-        sh = root.winfo_screenheight()
-        x = (sw - w) // 2
-        y = sh - h - 90  # hover just above the taskbar
-        root.geometry(f"+{x}+{y}")
+        area = self._active_work_area()
+        if area is not None:
+            left, top, right, bottom = area
+        else:
+            # No Win32 (or it failed): fall back to the primary monitor.
+            left, top = 0, 0
+            right = root.winfo_screenwidth()
+            bottom = root.winfo_screenheight()
+        x = left + (right - left - w) // 2
+        y = bottom - h - 24  # hover just above the taskbar
+        # Never let the pill spill off the chosen monitor.
+        x = max(left, min(x, right - w))
+        y = max(top, min(y, bottom - h))
+        root.geometry(f"+{int(x)}+{int(y)}")
 
     def _poll(self) -> None:
         try:

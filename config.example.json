@@ -1,6 +1,6 @@
 {
   "model": {
-    "name": "small.en",
+    "name": "auto",
     "device": "auto",
     "compute_type": "auto",
     "beam_size": 5,
