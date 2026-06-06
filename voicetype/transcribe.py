@@ -103,6 +103,37 @@ def _has_signal(audio, rms_floor: float = 0.0015) -> bool:
         return True
 
 
+def _normalize(audio, target: float = 0.9, max_gain: float = 40.0,
+               min_level: float = 1.0e-4):
+    """Scale a quiet clip up so Whisper and its VAD see a normal level.
+
+    Uses a *robust* reference level (99.9th percentile of |sample|) rather than
+    the raw maximum: a single full-scale click — common in shared-mode WASAPI
+    streams — would otherwise read as "already loud" and defeat the boost while
+    the real speech stays too faint for the VAD. We clip those rare spikes, then
+    amplify so the bulk of the speech reaches ~0.9. A genuinely silent (muted)
+    clip is left untouched so its hiss is not amplified into hallucinations.
+    """
+    import numpy as np
+
+    try:
+        a = np.asarray(audio, dtype="float32")
+        if a.size == 0:
+            return audio
+        ref = float(np.quantile(np.abs(a), 0.999))
+        if ref < min_level:
+            return a  # essentially silence — let the guards drop it
+        a = np.clip(a, -ref, ref)             # remove rare spikes that fool the level
+        gain = min(max_gain, target / ref)
+        if gain <= 1.0:
+            return a.astype("float32")        # already loud enough; never attenuate
+        log.info("Boosting quiet audio %.1fx (ref %.4f -> %.2f).",
+                 gain, ref, ref * gain)
+        return (a * gain).astype("float32")
+    except Exception:  # noqa: BLE001
+        return audio
+
+
 class Transcriber:
     """Wraps a faster-whisper model with lazy, thread-safe loading."""
 
@@ -196,6 +227,11 @@ class Transcriber:
     def transcribe(self, audio) -> str:
         """Return the transcript for a 16 kHz mono float32 numpy array."""
         self.ensure_loaded()
+        # Quiet mics are the #1 cause of dropped dictation: the VAD deletes faint
+        # speech and the model under-performs. Normalise the level first so both
+        # behave as if the mic were loud — then the VAD pass usually succeeds and,
+        # if it still over-trims, _has_signal reliably triggers the no-VAD retry.
+        audio = _normalize(audio)
         vad_on = bool(self.cfg["model"].get("vad_filter", True))
         text = self._safe_run(audio, vad_on)
         # The built-in VAD sometimes discards an entire quiet / low-SNR phrase as

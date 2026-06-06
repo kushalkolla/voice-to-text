@@ -357,7 +357,13 @@ class StreamingRecorder:
 
         if status:
             log.debug("audio status: %s", status)
-        block = np.asarray(indata, dtype="float32").reshape(-1)
+        # COPY, don't view: ``indata`` is PortAudio's internal buffer and is
+        # recycled on the very next callback. ``np.asarray(..., float32)`` does
+        # *not* copy a float32 input, so storing that view hands the segmenter
+        # memory that is overwritten/freed before the phrase is concatenated —
+        # which surfaced as astronomical (~1e28) garbage samples and pure noise
+        # to Whisper. ``np.array`` makes an owned copy, exactly like Recorder._cb.
+        block = np.array(indata, dtype="float32").reshape(-1)
         try:
             self._process(block)
         except Exception as exc:  # noqa: BLE001 - never let the audio thread die

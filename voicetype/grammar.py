@@ -72,8 +72,21 @@ class GrammarCorrector:
 
     def warmup_async(self) -> None:
         if self.enabled:
-            threading.Thread(target=self._ensure_tool, daemon=True,
+            threading.Thread(target=self._warmup, daemon=True,
                              name="languagetool-warmup").start()
+
+    def _warmup(self) -> None:
+        """Start the server *and* pay the engine's one-time JIT cost on a throwaway
+        sentence in the background, so the first *real* correction is ~30 ms rather
+        than the ~2.5 s cold-start penalty — which otherwise lands entirely on the
+        user's very first dictated phrase and reads as "why is it so slow?"."""
+        if not self._ensure_tool():
+            return
+        try:
+            self._tool.correct("This is a warm up sentence.")
+            log.info("Grammar engine warmed.")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("grammar warmup correction failed: %s", exc)
 
     def correct(self, text: str) -> str:
         """Return a grammar-corrected copy of ``text`` (or the original on failure)."""
