@@ -18,6 +18,20 @@ Set-Location $PSScriptRoot
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
+# Stop VoiceType first, or its own running files (pythonw.exe inside .venv and the
+# LanguageTool java child) stay locked and can't be deleted. Match ONLY our own
+# processes by command line so nothing else on the machine is touched.
+Write-Step "Stopping VoiceType if it's running"
+try {
+    Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like '*voicetype*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-CimInstance Win32_Process -Filter "Name='java.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like '*languagetool*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 600
+} catch {}
+
 Write-Step "Removing virtual environment"
 if (Test-Path ".venv") { Remove-Item ".venv" -Recurse -Force }
 

@@ -36,7 +36,7 @@ function Ok($m)   { Write-Host "    $m" -ForegroundColor Green }
 $include = @(
     "voicetype",
     "Install.bat", "install.ps1", "uninstall.ps1",
-    "Start Voice Typing.bat", "Open Voice Typing.bat", "open-voice-typing.ps1",
+    "Start Voice Typing.bat",
     "requirements.txt", "requirements-gpu.txt", "README.md", "LICENSE", "config.example.json"
 )
 

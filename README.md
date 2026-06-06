@@ -174,10 +174,9 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -NoGpu
 
 ## Uninstall
 
-```powershell
-powershell -ExecutionPolicy Bypass -File uninstall.ps1          # remove env + shortcuts
-powershell -ExecutionPolicy Bypass -File uninstall.ps1 -Purge   # also delete downloaded model/grammar
-```
+Uninstall it like any other app: **Windows Settings → Apps → installed apps → VoiceType → Uninstall** (or right-click VoiceType in the Start menu → **Uninstall**). That stops it and removes the app, its shortcuts, and the start-with-Windows entry — no separate tool to run.
+
+The one-time speech model stays cached under `%USERPROFILE%\.cache\huggingface` so a reinstall is instant; delete that folder too if you want the disk space back.
 
 ---
 
@@ -188,12 +187,6 @@ Microphone → record (16 kHz) → faster-whisper (local) → cleanup → Langua
 ```
 
 No audio or text ever leaves your computer. The only network use is the one-time download of the speech model and grammar engine.
-
----
-
-## Ultra-light fallback (no install)
-
-Don't want to install anything at all? Windows 10/11 ships with a basic built-in voice typing — the very thing `Win + H` opens when VoiceType isn't running. This repo keeps a tiny launcher for it (`Open Voice Typing.bat` / `open-voice-typing.ps1`), but it's far more limited: no custom punctuation, no grammar, no spoken commands, because the text goes straight from Windows into your app without passing through this tool. VoiceType exists to replace it.
 
 ---
 
