@@ -28,7 +28,7 @@ Everything runs on **your own computer**. No accounts, no API keys, no subscript
 
 **Easiest — the one-file installer:**
 
-1. **Download `VoiceType-Setup.exe`** onto the PC you want to use it on.
+1. **[Download `VoiceType-Setup.exe`](https://github.com/kushalkolla/voice-to-text/raw/main/VoiceType-Setup.exe)** onto the PC you want to use it on.
 2. **Double-click it.** (Windows may show a blue *"Windows protected your PC"* notice because the file is free and unsigned — click *More info → Run anyway*. It's the same VoiceType, just not paid-code-signed.)
 3. Click through the **setup wizard** (Welcome → License → Install). It sets everything up and offers to launch VoiceType at the end.
 
