@@ -88,6 +88,21 @@ def _cpu_threads(mcfg: dict) -> int:
     return max(1, (os.cpu_count() or 4) - 2)
 
 
+def _has_signal(audio, rms_floor: float = 0.0015) -> bool:
+    """True if a clip carries enough energy to be worth transcribing without the
+    VAD safety net. Guards the no-VAD retry from hallucinating words out of a
+    near-silent clip, while still letting genuinely quiet speech through."""
+    import numpy as np
+
+    try:
+        a = np.asarray(audio, dtype="float32")
+        if a.size == 0:
+            return False
+        return float(np.sqrt(np.mean(a * a))) >= rms_floor
+    except Exception:  # noqa: BLE001
+        return True
+
+
 class Transcriber:
     """Wraps a faster-whisper model with lazy, thread-safe loading."""
 
@@ -181,18 +196,32 @@ class Transcriber:
     def transcribe(self, audio) -> str:
         """Return the transcript for a 16 kHz mono float32 numpy array."""
         self.ensure_loaded()
+        vad_on = bool(self.cfg["model"].get("vad_filter", True))
+        text = self._safe_run(audio, vad_on)
+        # The built-in VAD sometimes discards an entire quiet / low-SNR phrase as
+        # "non-speech". Our energy gate already isolated real speech upstream, so
+        # an empty result here usually means VAD over-trimmed — retry once without
+        # it (only if the clip actually carries signal) so we never silently drop
+        # the user's words. This was the cause of "it captures but types nothing".
+        if not text and vad_on and _has_signal(audio):
+            log.info("Transcript empty after VAD; retrying without the VAD filter.")
+            text = self._safe_run(audio, vad_filter=False)
+        return text
+
+    def _safe_run(self, audio, vad_filter: bool) -> str:
+        """Run inference, transparently falling back GPU -> CPU on failure (a GPU
+        that loads but can't execute, e.g. missing cuDNN, must not break every
+        utterance)."""
         try:
-            return self._run(audio)
+            return self._run(audio, vad_filter)
         except Exception as exc:  # noqa: BLE001
-            # A GPU that loads but can't run inference (e.g. missing cuDNN) should
-            # transparently fall back to CPU rather than failing every utterance.
             if self.device == "cuda":
                 log.warning("GPU inference failed (%s); retrying on CPU.", exc)
                 self._reload_cpu()
-                return self._run(audio)
+                return self._run(audio, vad_filter)
             raise
 
-    def _run(self, audio) -> str:
+    def _run(self, audio, vad_filter: bool) -> str:
         mcfg = self.cfg["model"]
         task = "translate" if self.task == "translate" else "transcribe"
         # For translate, let Whisper detect the spoken language (any -> English).
@@ -208,7 +237,7 @@ class Transcriber:
             task=task,
             language=language,
             beam_size=int(mcfg.get("beam_size", 5)),
-            vad_filter=bool(mcfg.get("vad_filter", True)),
+            vad_filter=vad_filter,
             temperature=float(mcfg.get("temperature", 0.0)),
             initial_prompt=mcfg.get("initial_prompt") or None,
             condition_on_previous_text=False,  # avoids run-on hallucinations in dictation
