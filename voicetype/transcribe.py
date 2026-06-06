@@ -123,10 +123,10 @@ def _normalize(audio, target: float = 0.9, max_gain: float = 40.0,
         ref = float(np.quantile(np.abs(a), 0.999))
         if ref < min_level:
             return a  # essentially silence — let the guards drop it
-        a = np.clip(a, -ref, ref)             # remove rare spikes that fool the level
         gain = min(max_gain, target / ref)
         if gain <= 1.0:
-            return a.astype("float32")        # already loud enough; never attenuate
+            return a.astype("float32")        # already loud enough; return as-is (no clip)
+        a = np.clip(a, -ref, ref)             # clip rare spikes only when we boost
         log.info("Boosting quiet audio %.1fx (ref %.4f -> %.2f).",
                  gain, ref, ref * gain)
         return (a * gain).astype("float32")

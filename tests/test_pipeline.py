@@ -75,8 +75,8 @@ class TestPostProcessor(unittest.TestCase):
 
 class TestModelResolution(unittest.TestCase):
     def test_auto_gpu(self):
-        self.assertEqual(_resolve_model_name("auto", "cuda", "transcribe"), "large-v3")
-        self.assertEqual(_resolve_model_name("auto", "cuda", "translate"), "large-v3")
+        self.assertEqual(_resolve_model_name("auto", "cuda", "transcribe"), "large-v3-turbo")
+        self.assertEqual(_resolve_model_name("auto", "cuda", "translate"), "large-v3-turbo")
 
     def test_auto_cpu(self):
         self.assertEqual(_resolve_model_name("auto", "cpu", "transcribe"), "small.en")
@@ -100,6 +100,24 @@ class TestConfig(unittest.TestCase):
     def test_deep_merge(self):
         merged = _deep_merge({"a": {"x": 1, "y": 2}}, {"a": {"y": 9}})
         self.assertEqual(merged["a"], {"x": 1, "y": 9})
+
+    def test_load_config_tolerates_utf8_bom(self):
+        # Windows Notepad saves UTF-8 with a BOM; load_config must still read it
+        # rather than silently falling back to defaults.
+        import json
+        import os
+        import tempfile
+        from pathlib import Path
+        from voicetype.config import load_config
+        fd, p = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        try:
+            Path(p).write_text(json.dumps({"model": {"name": "tiny.en"}}),
+                               encoding="utf-8-sig")
+            cfg = load_config(Path(p))
+            self.assertEqual(cfg["model"]["name"], "tiny.en")
+        finally:
+            os.remove(p)
 
 
 if __name__ == "__main__":

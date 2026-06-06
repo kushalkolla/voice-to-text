@@ -47,8 +47,10 @@ _AMOUNT = r"(\d[\d,]*(?:\.\d+)?|%s)" % _NUM_RUN
 _DOLLARS_RE = re.compile(
     r"\b%s\s+dollars?(?:\s+(?:and\s+)?%s\s+cents?)?" % (_AMOUNT, _AMOUNT), re.I)
 _PERCENT_RE = re.compile(r"\b%s\s+percent\b" % _AMOUNT, re.I)
+# Only well-known TLDs that rarely appear as plain words after "dot" — avoids
+# turning prose like "dot me" / "dot us" / "dot co" into a fake domain.
 _DOMAIN_RE = re.compile(
-    r"\s+dot\s+(com|org|net|io|edu|gov|co|app|dev|ai|me|us|uk)\b", re.I)
+    r"\s+dot\s+(com|org|net|io|edu|gov|app|dev|uk)\b", re.I)
 
 
 def _words_to_int(phrase: str):

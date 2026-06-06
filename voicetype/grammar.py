@@ -107,3 +107,4 @@ class GrammarCorrector:
         except Exception:  # noqa: BLE001
             pass
         self._tool = None
+        self.available = False  # stay closed; don't silently respawn a Java engine on later use

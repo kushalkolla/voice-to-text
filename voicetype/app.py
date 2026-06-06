@@ -266,7 +266,11 @@ class App:
                 except Exception as exc:  # noqa: BLE001 - one bad phrase must not end the session
                     log.exception("Live phrase error: %s", exc)
         if not self._stop.is_set():
-            self._set_state(IDLE)
+            # Only fall back to idle if we're still the finishing session, so a
+            # stale consumer can't clobber a freshly started one back to idle.
+            with self._state_lock:
+                if self.state == TRANSCRIBING:
+                    self._set_state(IDLE)
         log.info("Live dictation stopped.")
 
     def _end_stream(self, flush: bool = True) -> None:

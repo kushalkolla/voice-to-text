@@ -114,15 +114,23 @@ class Injector:
             # the LAST queued paste, back to the clipboard we had before the burst.
             def _restore() -> None:
                 time.sleep(0.4)
+                to_restore = None
+                do_it = False
                 with self._lock:
                     self._pending_restores -= 1
                     if self._pending_restores <= 0:
                         self._pending_restores = 0
-                        try:
-                            pyperclip.copy(self._saved_clip if self._saved_clip is not None else "")
-                        except Exception:  # noqa: BLE001
-                            pass
+                        to_restore = self._saved_clip if self._saved_clip is not None else ""
                         self._saved_clip = None
+                        do_it = True
+                # Do the (blocking) clipboard write OUTSIDE the lock: if it ever
+                # stalls on Windows clipboard contention it must not freeze the
+                # insert/backspace/undo path, which also takes this lock.
+                if do_it:
+                    try:
+                        pyperclip.copy(to_restore)
+                    except Exception:  # noqa: BLE001
+                        pass
 
             threading.Thread(target=_restore, daemon=True).start()
 

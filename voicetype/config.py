@@ -177,7 +177,7 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
         log.info("Created default config at %s", path)
         return copy.deepcopy(DEFAULTS)
     try:
-        user = json.loads(path.read_text(encoding="utf-8"))
+        user = json.loads(path.read_text(encoding="utf-8-sig"))
         if not isinstance(user, dict):
             raise ValueError("config root must be a JSON object")
         return _deep_merge(DEFAULTS, user)
@@ -187,7 +187,13 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 
 
 def save_config(cfg: dict[str, Any], path: Path | None = None) -> None:
-    """Write ``cfg`` to disk as pretty JSON."""
+    """Write ``cfg`` to disk as pretty JSON, atomically — a crash mid-write must
+    not leave a truncated config that fails to parse on the next launch."""
+    import os
+
     path = path or CONFIG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    text = json.dumps(cfg, indent=2, ensure_ascii=False)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)

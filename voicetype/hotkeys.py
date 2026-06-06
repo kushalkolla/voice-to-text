@@ -136,6 +136,7 @@ class HotkeyManager:
 
     def resume(self) -> None:
         self._suspended = False
+        self._ptt_down = False  # clear any push-to-talk press that arrived while suspended
 
     # -- callbacks -------------------------------------------------------
     def _toggle_cb(self) -> None:
