@@ -134,6 +134,38 @@ def _normalize(audio, target: float = 0.9, max_gain: float = 40.0,
         return audio
 
 
+def _denoise(audio, sr: int = 16000):
+    """Gentle noise reduction before recognition (off unless ``audio.denoise``).
+
+    Removes sub-80 Hz rumble (room/handling, never speech) and *softly* attenuates
+    frequency bins sitting well below the clip's own noise floor. Deliberately
+    conservative: Whisper is noise-robust, and full spectral subtraction creates
+    artefacts that *hurt* recognition, so nothing is ever zeroed (a -6 dB floor)
+    — we just take the edge off steady background noise.
+    """
+    import numpy as np
+
+    try:
+        a = np.asarray(audio, dtype="float32").reshape(-1)
+        if a.size < sr // 4:           # < 0.25 s: too short to estimate noise
+            return audio
+        spec = np.fft.rfft(a)
+        freqs = np.fft.rfftfreq(a.size, 1.0 / sr)
+        mag = np.abs(spec)
+        spec[freqs < 80.0] = 0.0       # high-pass: kill low-frequency rumble
+        noise = float(np.percentile(mag, 25))
+        if noise > 0.0:
+            thresh = 1.5 * noise
+            gain = np.ones_like(mag)
+            low = mag < thresh
+            gain[low] = np.maximum(0.5, mag[low] / thresh)   # attenuate by ≤6 dB
+            spec = spec * gain
+        out = np.fft.irfft(spec, n=a.size).astype("float32")
+        return out if np.all(np.isfinite(out)) else audio
+    except Exception:  # noqa: BLE001
+        return audio
+
+
 def _resolve_model_name(name: str, device: str, task: str) -> str:
     """Map the special model name ``"auto"`` to one sized to the hardware.
 
@@ -224,31 +256,52 @@ class Transcriber:
                 compute = _auto_compute_type(device)
 
             threads = _cpu_threads(mcfg)
-            name = _resolve_model_name(mcfg["name"], device, self.task)
-            log.info(
-                "Loading Whisper model %r (device=%s, compute=%s, cpu_threads=%d) - first run downloads it...",
-                name, device, compute, threads,
-            )
-            try:
-                self._model = WhisperModel(name, device=device,
-                                           compute_type=compute, cpu_threads=threads)
-            except Exception as exc:  # noqa: BLE001 - retry on CPU/int8 if GPU path fails
-                log.warning("Model load failed on %s/%s (%s); retrying on cpu/int8.",
-                            device, compute, exc)
-                device, compute = "cpu", "int8"
-                name = _resolve_model_name(mcfg["name"], device, self.task)
-                self._model = WhisperModel(name, device=device,
-                                           compute_type=compute, cpu_threads=threads)
-            self.device, self.compute_type = device, compute
-            self.model_name = name
+            last_exc = None
+            for dev, name, comp in self._load_candidates(mcfg, device, compute):
+                try:
+                    log.info("Loading Whisper model %r (device=%s, compute=%s, "
+                             "cpu_threads=%d) - first run downloads it...",
+                             name, dev, comp, threads)
+                    self._model = WhisperModel(name, device=dev, compute_type=comp,
+                                               cpu_threads=threads)
+                    # A GPU can load yet be unable to run (missing cuBLAS/cuDNN, or
+                    # out of memory for a big model). Verify with a tiny inference
+                    # before committing so we can step down to a smaller option.
+                    if dev == "cuda" and not self._gpu_works():
+                        raise RuntimeError("GPU loaded but the self-check inference "
+                                           "failed (CUDA libraries or VRAM)")
+                    self.device, self.compute_type, self.model_name = dev, comp, name
+                    log.info("Model ready (model=%s, device=%s, compute=%s).",
+                             name, dev, comp)
+                    return
+                except Exception as exc:  # noqa: BLE001 - try the next fallback
+                    last_exc = exc
+                    self._model = None
+                    log.warning("Could not use %r on %s/%s (%s); trying the next "
+                                "option.", name, dev, comp, exc)
+            raise RuntimeError(f"Could not load any Whisper model ({last_exc})")
 
-            # A GPU can load yet be unable to run (missing cuBLAS/cuDNN). Verify
-            # with a tiny inference now so the first real dictation never fails.
-            if self.device == "cuda" and not self._gpu_works():
-                log.warning("GPU detected but its CUDA libraries are unusable "
-                            "(e.g. cuBLAS/cuDNN missing); using CPU instead.")
-                self._reload_cpu()
-            log.info("Model ready (device=%s, compute=%s).", self.device, self.compute_type)
+    def _load_candidates(self, mcfg, device, compute):
+        """Ordered ``(device, model, compute)`` attempts.
+
+        For ``model.name = "auto"`` on a GPU we try the best model (large-v3) and,
+        if it won't load or run (e.g. a small-VRAM GPU), step down to a lighter
+        one, then finally CPU — so every machine gets the best model it can
+        actually run. An explicit model name is honoured as given, with only a CPU
+        last resort. Consecutive duplicates are removed.
+        """
+        is_auto = (str(mcfg.get("name", "")).strip().lower() == "auto")
+        primary = _resolve_model_name(mcfg["name"], device, self.task)
+        cands = [(device, primary, compute)]
+        if is_auto and device == "cuda":
+            cands.append(("cuda", "medium", compute))   # lighter multilingual GPU model
+        cpu_name = _resolve_model_name(mcfg["name"], "cpu", self.task)
+        cands.append(("cpu", cpu_name, "int8"))         # always-works last resort
+        out = []
+        for c in cands:
+            if not out or out[-1] != c:
+                out.append(c)
+        return out
 
     def _gpu_works(self) -> bool:
         """Run a throwaway inference to confirm the GPU can actually execute."""
@@ -290,6 +343,9 @@ class Transcriber:
     def transcribe(self, audio) -> str:
         """Return the transcript for a 16 kHz mono float32 numpy array."""
         self.ensure_loaded()
+        # Optional gentle denoise (off by default) for consistently noisy rooms.
+        if self.cfg.get("audio", {}).get("denoise", False):
+            audio = _denoise(audio)
         # Quiet mics are the #1 cause of dropped dictation: the VAD deletes faint
         # speech and the model under-performs. Normalise the level first so both
         # behave as if the mic were loud — then the VAD pass usually succeeds and,

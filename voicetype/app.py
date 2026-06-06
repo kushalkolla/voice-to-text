@@ -402,6 +402,34 @@ class App:
         )
         log.info("Speech task: %s.", self.transcriber.task)
 
+    # -- add word to dictionary (tray) -----------------------------------
+    def add_dictionary_word(self) -> None:
+        """Prompt for a word/name and add it so VoiceType spells/capitalizes it
+        right and is biased to recognize it. Saves config and reloads live."""
+        word = (_prompt_for_word(
+            "VoiceType — add word",
+            "Add a word or name so VoiceType spells and capitalizes it correctly\n"
+            "(e.g. CourseGlance, Airceleo, Kushal):") or "").strip()
+        if not word:
+            return
+        try:
+            repl = self.cfg.setdefault("postprocess", {}).setdefault("replacements", {})
+            repl[word.lower()] = word
+            from .config import save_config
+            save_config(self.cfg)
+            # Reload the pieces that use the dictionary, live (no restart).
+            self.postproc = PostProcessor(self.cfg)
+            from .transcribe import _build_hotwords
+            self.transcriber.hotwords = _build_hotwords(self.cfg)
+            log.info("Added dictionary word: %s", word)
+            if self.overlay is not None:
+                self.overlay.set_state("warn", f"✓ Added “{word}”")
+                t = threading.Timer(2.0, lambda: self._set_state(self.state))
+                t.daemon = True
+                t.start()
+        except Exception as exc:  # noqa: BLE001
+            log.error("Could not add dictionary word: %s", exc)
+
     # -- helpers ---------------------------------------------------------
     def _arm_max_timer(self) -> None:
         self._cancel_timer()
@@ -457,6 +485,31 @@ def _preview(text: str, width: int = 22) -> str:
     if len(flat) <= width:
         return flat
     return "…" + flat[-(width - 1):]
+
+
+def _prompt_for_word(title: str, prompt: str) -> str:
+    """Show a one-field input dialog in a *separate* process and return the text.
+
+    Out-of-process on purpose: the overlay already owns a Tk main loop on the
+    main thread, and a second Tk root in the same process is unsupported."""
+    import subprocess
+    import sys
+
+    script = (
+        "import tkinter as tk\n"
+        "from tkinter import simpledialog\n"
+        "r = tk.Tk(); r.withdraw(); r.attributes('-topmost', True)\n"
+        "s = simpledialog.askstring(%r, %r, parent=r)\n"
+        "import sys; sys.stdout.write(s or '')\n"
+        "r.destroy()\n" % (title, prompt)
+    )
+    try:
+        out = subprocess.run([sys.executable, "-c", script],
+                             capture_output=True, text=True, timeout=120)
+        return out.stdout or ""
+    except Exception as exc:  # noqa: BLE001
+        log.debug("word prompt failed: %s", exc)
+        return ""
 
 
 # Spoken edits: only fire when the *whole* utterance is the command, so normal

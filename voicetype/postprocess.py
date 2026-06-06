@@ -26,6 +26,90 @@ _SENTENCE_BOUNDARY = re.compile(r'([.!?]["\')\]]?)(\s+)([a-z])')
 _LONE_I = re.compile(r"(?<![A-Za-z'])i(?![A-Za-z])")
 _I_CONTRACTION = re.compile(r"(?<![A-Za-z'])i('[A-Za-z]+)")
 
+# -- inverse text normalization (spoken -> written numbers & symbols) --------
+_NUM_UNITS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19,
+}
+_NUM_TENS = {
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+    "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_NUM_SCALES = {"hundred": 100, "thousand": 1000, "million": 1_000_000,
+               "billion": 1_000_000_000}
+_NUM_WORDS = set(_NUM_UNITS) | set(_NUM_TENS) | set(_NUM_SCALES)
+# Longest-first so "seventeen" wins over "seven" in the alternation.
+_NW = "|".join(sorted(_NUM_WORDS, key=len, reverse=True))
+_NUM_RUN = r"(?:%s)(?:[\s-]+(?:and[\s-]+)?(?:%s))*" % (_NW, _NW)
+_AMOUNT = r"(\d[\d,]*(?:\.\d+)?|%s)" % _NUM_RUN
+_DOLLARS_RE = re.compile(
+    r"\b%s\s+dollars?(?:\s+(?:and\s+)?%s\s+cents?)?" % (_AMOUNT, _AMOUNT), re.I)
+_PERCENT_RE = re.compile(r"\b%s\s+percent\b" % _AMOUNT, re.I)
+_DOMAIN_RE = re.compile(
+    r"\s+dot\s+(com|org|net|io|edu|gov|co|app|dev|ai|me|us|uk)\b", re.I)
+
+
+def _words_to_int(phrase: str):
+    """Spoken whole number ("twenty five", "three thousand") -> int, or None if
+    it isn't a clean whole number."""
+    total = current = 0
+    seen = False
+    for t in re.split(r"[\s-]+", phrase.strip().lower()):
+        if t in ("and", ""):
+            continue
+        if t in _NUM_UNITS:
+            current += _NUM_UNITS[t]
+        elif t in _NUM_TENS:
+            current += _NUM_TENS[t]
+        elif t == "hundred":
+            current = (current or 1) * 100
+        elif t in _NUM_SCALES:
+            total += (current or 1) * _NUM_SCALES[t]
+            current = 0
+        else:
+            return None
+        seen = True
+    return (total + current) if seen else None
+
+
+def _amount_to_int(text: str):
+    """An _AMOUNT capture (digits or words) -> int, or None if not a whole number."""
+    s = (text or "").strip()
+    if re.fullmatch(r"\d[\d,]*", s):
+        return int(s.replace(",", ""))
+    return _words_to_int(s)
+
+
+def _normalize_numbers(text: str) -> str:
+    """Spoken numbers/symbols -> written form: "five dollars" -> "$5",
+    "twenty percent" -> "20%", "example dot com" -> "example.com".
+
+    Conservative and idempotent: anything it can't parse cleanly is left exactly
+    as-is, and digits Whisper already produced ("$5", "20%") aren't re-matched.
+    """
+    def _money(m):
+        d = _amount_to_int(m.group(1))
+        if d is None:
+            return m.group(0)
+        c = _amount_to_int(m.group(2)) if m.group(2) else None
+        if c is not None and 0 <= c < 100:
+            return "$%d.%02d" % (d, c)
+        return "$%d" % d
+
+    def _pct(m):
+        s = m.group(1).strip()
+        if re.fullmatch(r"\d[\d,]*(?:\.\d+)?", s):
+            return s.replace(",", "") + "%"
+        n = _words_to_int(s)
+        return ("%d%%" % n) if n is not None else m.group(0)
+
+    text = _DOLLARS_RE.sub(_money, text)
+    text = _PERCENT_RE.sub(_pct, text)
+    text = _DOMAIN_RE.sub(lambda m: "." + m.group(1).lower(), text)
+    return text
+
 
 class PostProcessor:
     def __init__(self, cfg: dict) -> None:
@@ -83,6 +167,10 @@ class PostProcessor:
         if self.cfg.get("capitalize_i", True):
             text = _I_CONTRACTION.sub(lambda m: "I" + m.group(1), text)
             text = _LONE_I.sub("I", text)
+        # Numbers/symbols last, so the spacing/capitalization passes above never
+        # split an inserted "." (e.g. "example.com") back apart.
+        if self.cfg.get("format_numbers", True):
+            text = _normalize_numbers(text)
         return self._tidy_lines(text)
 
     # -- helpers ---------------------------------------------------------

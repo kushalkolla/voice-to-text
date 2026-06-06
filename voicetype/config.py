@@ -23,11 +23,12 @@ LOG_DIR = PROJECT_ROOT / "logs"
 # overrides any of these; deleting a key restores the default below.
 DEFAULTS: dict[str, Any] = {
     "model": {
-        # Whisper model. "small.en" is the sweet spot for English dictation on a
-        # CPU (great accuracy + punctuation, ~1-2 s latency). Lighter:
-        # "base.en"/"tiny.en". Heavier/best: "medium.en", "large-v3",
-        # "distil-small.en" (fast). Use a non-".en" model for other languages.
-        "name": "small.en",
+        # Whisper model. "auto" (recommended) loads the most accurate free model
+        # your hardware can run: large-v3 on an NVIDIA GPU (multilingual, best for
+        # names/accents; ~3 GB VRAM + a one-time download), small.en on CPU (fast).
+        # Pin one to override: "tiny.en"/"base.en" (faster), "medium.en"/"large-v3"
+        # (more accurate), "distil-small.en" (light). Non-".en" = other languages.
+        "name": "auto",
         "device": "auto",          # auto | cpu | cuda
         "compute_type": "auto",    # auto | int8 | int8_float16 | float16 | float32
         "beam_size": 5,
@@ -61,6 +62,11 @@ DEFAULTS: dict[str, Any] = {
         # typing nothing. A live mic emits nonzero dither even in a quiet room, so
         # this only fires for a real problem. Set to 0 to disable.
         "silence_warn_seconds": 4.0,
+        # Optional gentle noise reduction before recognition (low-rumble high-pass
+        # + a conservative spectral gate). Whisper is already noise-robust, so this
+        # is off by default; enable it only if you dictate in a consistently noisy
+        # room (fan/AC/traffic). Too-aggressive denoising can hurt accuracy.
+        "denoise": False,
     },
     "streaming": {
         # Live dictation: press the shortcut once and it types as you speak, one
@@ -74,6 +80,10 @@ DEFAULTS: dict[str, Any] = {
         "start_pad_ms": 200,       # keep this much audio before onset so words aren't clipped
         "energy_floor": 0.003,     # min RMS (0..1) to count as speech; raised automatically in noise
         "energy_mult": 3.0,        # live threshold = max(energy_floor, noise_floor * energy_mult)
+        # Hysteresis: once mid-phrase, the bar to *keep* going is this fraction of
+        # the bar to start. Soft syllables and brief between-word dips then don't
+        # get mistaken for the end of a sentence (fewer phrases cut mid-thought).
+        "release_mult": 0.6,
     },
     "hotkeys": {
         # Press this once to start dictating; stop with the ✕ button, Esc, or by
@@ -108,6 +118,9 @@ DEFAULTS: dict[str, Any] = {
         "smart_capitalize": True,
         "capitalize_i": True,
         "fix_spacing": True,
+        # Turn spoken numbers/symbols into written form: "five dollars" -> "$5",
+        # "twenty percent" -> "20%", "example dot com" -> "example.com".
+        "format_numbers": True,
         "voice_commands": True,
         # Spoken phrase -> inserted text. Said out loud, these become symbols.
         "commands": {

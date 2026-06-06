@@ -336,6 +336,7 @@ class StreamingRecorder:
         self._start_pad_ms = float(s.get("start_pad_ms", 200))
         self._energy_floor = float(s.get("energy_floor", 0.003))
         self._energy_mult = float(s.get("energy_mult", 3.0))
+        self._release_mult = float(s.get("release_mult", 0.6))
 
     def _reset_segmenter(self) -> None:
         import collections
@@ -388,12 +389,15 @@ class StreamingRecorder:
             self._noise = 0.9 * self._noise + 0.1 * rms     # follow quiet down fast
         else:
             self._noise = 0.995 * self._noise + 0.005 * rms  # creep up slowly
-        threshold = max(self._energy_floor, self._noise * self._energy_mult)
-        speaking = rms > threshold
+        # Hysteresis: a higher bar to *start* a phrase, a lower bar to *continue*
+        # one, so soft syllables and brief between-word dips don't get mistaken
+        # for the end of a sentence (the #1 cause of phrases cut mid-thought).
+        start_threshold = max(self._energy_floor, self._noise * self._energy_mult)
+        release_threshold = start_threshold * self._release_mult
 
         if not self._in_speech:
             self._pre.append(block)
-            if speaking:
+            if rms > start_threshold:
                 self._speech_run_ms += self._block_ms
                 if self._speech_run_ms >= self._onset_ms:
                     self._in_speech = True          # a phrase has begun
@@ -406,7 +410,7 @@ class StreamingRecorder:
 
         # Mid-phrase: accumulate until a long-enough pause (or hard length cap).
         self._seg.append(block)
-        if speaking:
+        if rms > release_threshold:
             self._silence_run_ms = 0.0
         else:
             self._silence_run_ms += self._block_ms

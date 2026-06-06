@@ -80,6 +80,7 @@ class Tray:
             Menu.SEPARATOR,
             MenuItem("Grammar correction", self._toggle_grammar, checked=grammar_checked),
             MenuItem("Translate to English", self._toggle_translate, checked=translate_checked),
+            MenuItem("Add word to dictionary…", self._add_word),
             MenuItem("Edit settings…", self._open_config),
             MenuItem("Open logs folder", self._open_logs),
             Menu.SEPARATOR,
@@ -126,6 +127,11 @@ class Tray:
     def _toggle_translate(self, _icon=None, _item=None) -> None:
         self.app.toggle_translate()
         self.set_state(self.state)
+
+    def _add_word(self, _icon=None, _item=None) -> None:
+        import threading
+        threading.Thread(target=self.app.add_dictionary_word, daemon=True,
+                         name="add-word").start()
 
     def _open_config(self, _icon=None, _item=None) -> None:
         self._open(CONFIG_PATH)
